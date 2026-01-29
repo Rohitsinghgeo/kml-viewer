@@ -28,10 +28,10 @@ html,body,#map{
 
 /* 🔤 LABEL STYLE */
 .kml-label{
-  color:#ffffff;                 /* ✅ WHITE TEXT */
+  color:#ffffff;
   font-weight:bold;
   white-space:nowrap;
-  text-shadow:2px 2px 4px #000;  /* satellite readability */
+  text-shadow:2px 2px 4px #000;
   pointer-events:none;
 }
 </style>
@@ -41,9 +41,17 @@ html,body,#map{
 
 <div id="panel">
   <input type="file" id="fileInput" accept=".kml,.kmz" multiple><br><br>
+
   <button onclick="toggleLabels()">Text ON / OFF</button>
   <hr>
-  <b>Layers</b>
+
+  <b>Geometry</b><br>
+  <input type="checkbox" id="ptChk" checked> Points<br>
+  <input type="checkbox" id="lnChk" checked> Lines<br>
+  <input type="checkbox" id="pgChk" checked> Polygons
+
+  <hr>
+  <b>Files</b>
   <div id="layerList"></div>
 </div>
 
@@ -57,7 +65,7 @@ html,body,#map{
 // ================= MAP =================
 const satellite = L.tileLayer(
  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
- {maxZoom:19,maxNativeZoom:19}
+ {maxZoom:22,maxNativeZoom:19}
 );
 
 const map = L.map("map",{
@@ -74,6 +82,11 @@ const layers = {};
 const labels = {};
 let labelsVisible = true;
 const LABEL_MIN_ZOOM = 11;
+
+// 🔥 Geometry groups
+const pointGroup = L.layerGroup().addTo(map);
+const lineGroup  = L.layerGroup().addTo(map);
+const polyGroup  = L.layerGroup().addTo(map);
 
 // ================= FILE INPUT =================
 document.getElementById("fileInput").addEventListener("change", e=>{
@@ -109,16 +122,30 @@ function loadKMZ(file){
 // ================= ADD LAYER =================
 function addLayer(geojson,name){
 
-  const group=L.layerGroup().addTo(map);
-  layers[name]=group;
+  const fileGroup=L.layerGroup().addTo(map);
+  layers[name]=fileGroup;
   labels[name]=[];
 
-  const geo=L.geoJSON(geojson,{
+  L.geoJSON(geojson,{
     style:{color:"#ff0000",weight:2},
-    pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5,color:"#ff0000"}),
+
+    pointToLayer:(f,ll)=>{
+      const m=L.circleMarker(ll,{radius:5,color:"#ff0000"});
+      pointGroup.addLayer(m);
+      fileGroup.addLayer(m);
+      return m;
+    },
 
     onEachFeature:(f,layer)=>{
-      group.addLayer(layer);
+
+      if(layer instanceof L.Polygon){
+        polyGroup.addLayer(layer);
+        fileGroup.addLayer(layer);
+      }
+      else if(layer instanceof L.Polyline){
+        lineGroup.addLayer(layer);
+        fileGroup.addLayer(layer);
+      }
 
       if(!f.properties?.name) return;
 
@@ -142,19 +169,15 @@ function addLayer(geojson,name){
     }
   });
 
-  if(geo.getBounds().isValid()){
-    map.fitBounds(geo.getBounds(),{padding:[40,40]});
-  }
-
-  // ---- UI ----
+  // ---- FILE TOGGLE UI ----
   const row=document.createElement("div");
   row.innerHTML=`<input type="checkbox" checked> ${name}`;
   row.querySelector("input").onchange=function(){
     if(this.checked){
-      map.addLayer(group);
+      map.addLayer(fileGroup);
       refreshLabels();
     }else{
-      map.removeLayer(group);
+      map.removeLayer(fileGroup);
       labels[name].forEach(l=>map.removeLayer(l));
     }
   };
@@ -163,7 +186,18 @@ function addLayer(geojson,name){
   refreshLabels();
 }
 
-// ================= DECLUTTER =================
+// ================= GEOMETRY TOGGLE =================
+ptChk.onchange=()=> toggleGroup(pointGroup,ptChk.checked);
+lnChk.onchange=()=> toggleGroup(lineGroup,lnChk.checked);
+pgChk.onchange=()=> toggleGroup(polyGroup,pgChk.checked);
+
+function toggleGroup(group,on){
+  if(on) map.addLayer(group);
+  else map.removeLayer(group);
+  refreshLabels();
+}
+
+// ================= LABEL DECLUTTER =================
 function refreshLabels(){
 
   const zoom=map.getZoom();
