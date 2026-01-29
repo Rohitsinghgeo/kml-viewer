@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>KML / KMZ Viewer – Stable</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+html,body,#map{
+  height:100%;
+  margin:0;
+}
+
+#panel{
+  position:absolute;
+  top:10px;
+  left:10px;
+  z-index:1000;
+  background:#fff;
+  padding:10px;
+  width:260px;
+  font-family:Arial;
+  box-shadow:0 0 10px rgba(0,0,0,.4);
+}
+
+#layerList div{ margin-top:5px; }
+
+/* 🔤 LABEL STYLE */
+.kml-label{
+  color:#ffffff;                 /* ✅ WHITE TEXT */
+  font-weight:bold;
+  white-space:nowrap;
+  text-shadow:2px 2px 4px #000;  /* satellite readability */
+  pointer-events:none;
+}
+</style>
+</head>
+
+<body>
+
+<div id="panel">
+  <input type="file" id="fileInput" accept=".kml,.kmz" multiple><br><br>
+  <button onclick="toggleLabels()">Text ON / OFF</button>
+  <hr>
+  <b>Layers</b>
+  <div id="layerList"></div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://unpkg.com/@tmcw/togeojson@5.6.0/dist/togeojson.umd.js"></script>
+
+<script>
+// ================= MAP =================
+const satellite = L.tileLayer(
+ "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+ {maxZoom:19,maxNativeZoom:19}
+);
+
+const map = L.map("map",{
+  center:[22,78],
+  zoom:4,
+  zoomControl:false,
+  layers:[satellite]
+});
+
+L.control.zoom({position:"topright"}).addTo(map);
+
+// ================= GLOBAL =================
+const layers = {};
+const labels = {};
+let labelsVisible = true;
+const LABEL_MIN_ZOOM = 11;
+
+// ================= FILE INPUT =================
+document.getElementById("fileInput").addEventListener("change", e=>{
+  for(const file of e.target.files){
+    if(file.name.toLowerCase().endsWith(".kml")) loadKML(file);
+    if(file.name.toLowerCase().endsWith(".kmz")) loadKMZ(file);
+  }
+});
+
+// ================= LOADERS =================
+function loadKML(file){
+  const r=new FileReader();
+  r.onload=()=>{
+    const kml=new DOMParser().parseFromString(r.result,"text/xml");
+    addLayer(toGeoJSON.kml(kml),file.name);
+  };
+  r.readAsText(file);
+}
+
+function loadKMZ(file){
+  JSZip.loadAsync(file).then(zip=>{
+    zip.forEach((p,e)=>{
+      if(p.toLowerCase().endsWith(".kml")){
+        e.async("string").then(t=>{
+          const kml=new DOMParser().parseFromString(t,"text/xml");
+          addLayer(toGeoJSON.kml(kml),file.name);
+        });
+      }
+    });
+  });
+}
+
+// ================= ADD LAYER =================
+function addLayer(geojson,name){
+
+  const group=L.layerGroup().addTo(map);
+  layers[name]=group;
+  labels[name]=[];
+
+  const geo=L.geoJSON(geojson,{
+    style:{color:"#ff0000",weight:2},
+    pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5,color:"#ff0000"}),
+
+    onEachFeature:(f,layer)=>{
+      group.addLayer(layer);
+
+      if(!f.properties?.name) return;
+
+      const pos =
+        layer.getBounds?.()?.getCenter?.() ||
+        layer.getLatLng?.();
+
+      if(!pos) return;
+
+      const label=L.marker(pos,{
+        icon:L.divIcon({
+          className:"kml-label",
+          html:f.properties.name,
+          iconSize:[200,24]
+        })
+      });
+
+      labels[name].push(label);
+      if(labelsVisible && map.getZoom()>=LABEL_MIN_ZOOM)
+        label.addTo(map);
+    }
+  });
+
+  if(geo.getBounds().isValid()){
+    map.fitBounds(geo.getBounds(),{padding:[40,40]});
+  }
+
+  // ---- UI ----
+  const row=document.createElement("div");
+  row.innerHTML=`<input type="checkbox" checked> ${name}`;
+  row.querySelector("input").onchange=function(){
+    if(this.checked){
+      map.addLayer(group);
+      refreshLabels();
+    }else{
+      map.removeLayer(group);
+      labels[name].forEach(l=>map.removeLayer(l));
+    }
+  };
+  document.getElementById("layerList").appendChild(row);
+
+  refreshLabels();
+}
+
+// ================= DECLUTTER =================
+function refreshLabels(){
+
+  const zoom=map.getZoom();
+  const drawn=[];
+
+  for(const k in labels){
+    labels[k].forEach(l=>map.removeLayer(l));
+  }
+
+  if(!labelsVisible || zoom<LABEL_MIN_ZOOM) return;
+
+  for(const k in labels){
+    if(!map.hasLayer(layers[k])) continue;
+
+    labels[k].forEach(l=>{
+      const p=map.latLngToContainerPoint(l.getLatLng());
+      const box={x:p.x-60,y:p.y-12,w:120,h:24};
+
+      if(drawn.some(b=>intersect(b,box))) return;
+
+      map.addLayer(l);
+      drawn.push(box);
+    });
+  }
+}
+
+function intersect(a,b){
+  return !(b.x>a.x+a.w || b.x+b.w<a.x || b.y>a.y+a.h || b.y+b.h<a.y);
+}
+
+map.on("zoomend moveend",refreshLabels);
+
+// ================= LABEL TOGGLE =================
+function toggleLabels(){
+  labelsVisible=!labelsVisible;
+  refreshLabels();
+}
+</script>
+
+</body>
+</html>
