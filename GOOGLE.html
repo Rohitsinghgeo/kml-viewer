@@ -6,16 +6,15 @@
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
+<!-- ✅ NEW MEASURE TOOL -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure/Leaflet.PolylineMeasure.css">
+
 <style>
-html,body,#map{
-  height:100%;
-  margin:0;
-}
+html,body,#map{height:100%;margin:0;}
 
 #panel{
   position:absolute;
-  top:10px;
-  left:10px;
+  top:10px; left:10px;
   z-index:1000;
   background:#fff;
   padding:10px;
@@ -24,21 +23,17 @@ html,body,#map{
   box-shadow:0 0 10px rgba(0,0,0,.4);
 }
 
-#layerList div{ margin-top:5px; }
+#layerList div{margin-top:5px;}
 
-/* 🔤 LABEL STYLE */
 .kml-label{
-  color:#ffffff;
+  color:#fff;
   font-weight:bold;
   white-space:nowrap;
   text-shadow:2px 2px 4px #000;
   pointer-events:none;
 }
 
-#searchBox{
-  width:100%;
-  margin-bottom:5px;
-}
+#searchBox{width:100%;margin-bottom:5px;}
 </style>
 </head>
 
@@ -46,7 +41,7 @@ html,body,#map{
 
 <div id="panel">
   <input type="file" id="fileInput" accept=".kml,.kmz" multiple><br><br>
-  
+
   <input type="text" id="searchBox" placeholder="Search feature name">
   <button onclick="searchFeature()">Search</button><br><br>
 
@@ -69,6 +64,9 @@ html,body,#map{
 <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://unpkg.com/@tmcw/togeojson@5.6.0/dist/togeojson.umd.js"></script>
 
+<!-- ✅ NEW MEASURE TOOL -->
+<script src="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure/Leaflet.PolylineMeasure.min.js"></script>
+
 <script>
 // ================= MAP =================
 const satellite = L.tileLayer(
@@ -80,28 +78,38 @@ const map = L.map("map",{
   center:[22,78],
   zoom:4,
   zoomControl:false,
+  zoomSnap:0.25,
+  zoomDelta:0.25,
   layers:[satellite]
 });
 
 L.control.zoom({position:"topright"}).addTo(map);
 
-// ================= GLOBAL =================
-const layers = {};
-const labels = {};
-let labelsVisible = true;
-const LABEL_MIN_ZOOM = 11;
+// ================= ✅ STABLE MEASUREMENT =================
+L.control.polylineMeasure({
+  position:"topright",
+  unit:"kilometres",
+  showBearings:false,
+  clearMeasurementsOnStop:true,
+  showClearControl:true,
+  showUnitControl:true
+}).addTo(map);
 
-// Geometry groups
-const pointGroup = L.layerGroup().addTo(map);
-const lineGroup  = L.layerGroup().addTo(map);
-const polyGroup  = L.layerGroup().addTo(map);
+// ================= GLOBAL =================
+const layers={}, labels={};
+let labelsVisible=true;
+const LABEL_MIN_ZOOM=11;
+
+const pointGroup=L.layerGroup().addTo(map);
+const lineGroup=L.layerGroup().addTo(map);
+const polyGroup=L.layerGroup().addTo(map);
 
 // ================= FILE INPUT =================
-document.getElementById("fileInput").addEventListener("change", e=>{
-  for(const file of e.target.files){
-    if(file.name.toLowerCase().endsWith(".kml")) loadKML(file);
-    if(file.name.toLowerCase().endsWith(".kmz")) loadKMZ(file);
-  }
+fileInput.addEventListener("change",e=>{
+  [...e.target.files].forEach(f=>{
+    if(f.name.endsWith(".kml")) loadKML(f);
+    if(f.name.endsWith(".kmz")) loadKMZ(f);
+  });
 });
 
 // ================= LOADERS =================
@@ -117,7 +125,7 @@ function loadKML(file){
 function loadKMZ(file){
   JSZip.loadAsync(file).then(zip=>{
     zip.forEach((p,e)=>{
-      if(p.toLowerCase().endsWith(".kml")){
+      if(p.endsWith(".kml")){
         e.async("string").then(t=>{
           const kml=new DOMParser().parseFromString(t,"text/xml");
           addLayer(toGeoJSON.kml(kml),file.name);
@@ -129,148 +137,81 @@ function loadKMZ(file){
 
 // ================= ADD LAYER =================
 function addLayer(geojson,name){
-
-  const fileGroup=L.layerGroup().addTo(map);
-  layers[name]=fileGroup;
-  labels[name]=[];
-
-  let featureBounds = [];
+  const g=L.layerGroup().addTo(map);
+  layers[name]=g; labels[name]=[];
+  const bounds=[];
 
   L.geoJSON(geojson,{
-    style: function(f){
-      if(f.geometry.type==="Polygon" || f.geometry.type==="MultiPolygon"){
-        return {color:"#e31a1c",weight:2,fillColor:"#e31a1c",fillOpacity:0.4};
-      } else if(f.geometry.type==="LineString" || f.geometry.type==="MultiLineString"){
-        return {color:"#33a02c",weight:3};
-      }
-      return {color:"#0000ff"}; // default
+    style:f=>{
+      if(f.geometry.type.includes("Polygon"))
+        return {color:"#e31a1c",fillOpacity:0.4};
+      if(f.geometry.type.includes("Line"))
+        return {color:"yellow",weight:3};
     },
 
     pointToLayer:(f,ll)=>{
-      const m=L.circleMarker(ll,{radius:5,color:"#1f78b4",fillColor:"#1f78b4",fillOpacity:1});
-      pointGroup.addLayer(m);
-      fileGroup.addLayer(m);
-      featureBounds.push(m.getLatLng());
-      return m;
+      const m=L.circleMarker(ll,{radius:5,color:"#1f78b4",fillOpacity:1});
+      pointGroup.addLayer(m); g.addLayer(m);
+      bounds.push(ll); return m;
     },
 
-    onEachFeature:(f,layer)=>{
-      if(layer instanceof L.Polygon){
-        polyGroup.addLayer(layer);
-        fileGroup.addLayer(layer);
-      } else if(layer instanceof L.Polyline){
-        lineGroup.addLayer(layer);
-        fileGroup.addLayer(layer);
-      }
+    onEachFeature:(f,l)=>{
+      if(l instanceof L.Polygon) polyGroup.addLayer(l);
+      if(l instanceof L.Polyline) lineGroup.addLayer(l);
+      g.addLayer(l);
 
-      const pos =
-        layer.getBounds?.()?.getCenter?.() ||
-        layer.getLatLng?.();
-
-      if(pos) featureBounds.push(pos);
+      const pos=l.getBounds?.()?.getCenter?.()||l.getLatLng?.();
+      if(pos) bounds.push(pos);
 
       if(f.properties?.name){
-        const label=L.marker(pos,{
-          icon:L.divIcon({className:"kml-label",html:f.properties.name,iconSize:[200,24]})
-        });
-        labels[name].push(label);
-        if(labelsVisible && map.getZoom()>=LABEL_MIN_ZOOM) label.addTo(map);
+        const lbl=L.marker(pos,{icon:L.divIcon({className:"kml-label",html:f.properties.name})});
+        labels[name].push(lbl);
+        if(labelsVisible && map.getZoom()>=LABEL_MIN_ZOOM) lbl.addTo(map);
       }
     }
   });
 
-  // Auto zoom to file features
-  if(featureBounds.length>0){
-    const bounds = L.latLngBounds(featureBounds);
-    map.fitBounds(bounds,{padding:[40,40]});
-  }
+  if(bounds.length) map.fitBounds(L.latLngBounds(bounds),{padding:[40,40]});
 
-  // ---- FILE TOGGLE UI ----
   const row=document.createElement("div");
   row.innerHTML=`<input type="checkbox" checked> ${name}`;
-  row.querySelector("input").onchange=function(){
-    if(this.checked){
-      map.addLayer(fileGroup);
-      refreshLabels();
-    } else {
-      map.removeLayer(fileGroup);
-      labels[name].forEach(l=>map.removeLayer(l));
-    }
+  row.querySelector("input").onchange=e=>{
+    e.target.checked?map.addLayer(g):map.removeLayer(g);
+    refreshLabels();
   };
-  document.getElementById("layerList").appendChild(row);
+  layerList.appendChild(row);
 
-  refreshLabels();
-}
-
-// ================= GEOMETRY TOGGLE =================
-ptChk.onchange=()=> toggleGroup(pointGroup,ptChk.checked);
-lnChk.onchange=()=> toggleGroup(lineGroup,lnChk.checked);
-pgChk.onchange=()=> toggleGroup(polyGroup,pgChk.checked);
-
-function toggleGroup(group,on){
-  if(on) map.addLayer(group);
-  else map.removeLayer(group);
   refreshLabels();
 }
 
 // ================= LABEL DECLUTTER =================
 function refreshLabels(){
-
-  const zoom=map.getZoom();
-  const drawn=[];
-
-  for(const k in labels){
-    labels[k].forEach(l=>map.removeLayer(l));
-  }
-
-  if(!labelsVisible || zoom<LABEL_MIN_ZOOM) return;
+  const zoom=map.getZoom(), drawn=[];
+  Object.values(labels).flat().forEach(l=>map.removeLayer(l));
+  if(!labelsVisible||zoom<LABEL_MIN_ZOOM) return;
 
   for(const k in labels){
     if(!map.hasLayer(layers[k])) continue;
-
     labels[k].forEach(l=>{
       const p=map.latLngToContainerPoint(l.getLatLng());
       const box={x:p.x-60,y:p.y-12,w:120,h:24};
-
-      if(drawn.some(b=>intersect(b,box))) return;
-
-      map.addLayer(l);
-      drawn.push(box);
+      if(drawn.some(b=>!(box.x>b.x+b.w||box.x+box.w<b.x||box.y>b.y+b.h||box.y+box.h<b.y))) return;
+      map.addLayer(l); drawn.push(box);
     });
   }
 }
 
-function intersect(a,b){
-  return !(b.x>a.x+a.w || b.x+b.w<a.x || b.y>a.y+a.h || b.y+b.h<a.y);
-}
-
 map.on("zoomend moveend",refreshLabels);
-
-// ================= LABEL TOGGLE =================
-function toggleLabels(){
-  labelsVisible=!labelsVisible;
-  refreshLabels();
-}
+function toggleLabels(){labelsVisible=!labelsVisible;refreshLabels();}
 
 // ================= SEARCH =================
 function searchFeature(){
-  const query=document.getElementById("searchBox").value.toLowerCase();
-  if(!query) return;
-
-  let found=false;
-  for(const name in labels){
-    for(const lbl of labels[name]){
-      const text = lbl.getElement()?.innerText?.toLowerCase();
-      if(text && text.includes(query)){
-        const latlng = lbl.getLatLng();
-        map.setView(latlng,16);
-        lbl.openPopup?.();
-        found=true;
-        return;
-      }
-    }
-  }
-  if(!found) alert("Feature not found!");
+  const q=searchBox.value.toLowerCase();
+  for(const k in labels)
+    for(const l of labels[k])
+      if(l.options.icon.options.html.toLowerCase().includes(q))
+        return map.setView(l.getLatLng(),16);
+  alert("Feature not found");
 }
 </script>
 
