@@ -19,7 +19,7 @@ html,body,#map{
   z-index:1000;
   background:#fff;
   padding:10px;
-  width:260px;
+  width:280px;
   font-family:Arial;
   box-shadow:0 0 10px rgba(0,0,0,.4);
 }
@@ -34,6 +34,11 @@ html,body,#map{
   text-shadow:2px 2px 4px #000;
   pointer-events:none;
 }
+
+#searchBox{
+  width:100%;
+  margin-bottom:5px;
+}
 </style>
 </head>
 
@@ -41,6 +46,9 @@ html,body,#map{
 
 <div id="panel">
   <input type="file" id="fileInput" accept=".kml,.kmz" multiple><br><br>
+  
+  <input type="text" id="searchBox" placeholder="Search feature name">
+  <button onclick="searchFeature()">Search</button><br><br>
 
   <button onclick="toggleLabels()">Text ON / OFF</button>
   <hr>
@@ -65,7 +73,7 @@ html,body,#map{
 // ================= MAP =================
 const satellite = L.tileLayer(
  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
- {maxZoom:22,maxNativeZoom:19}
+ { maxZoom:22, maxNativeZoom:19 }
 );
 
 const map = L.map("map",{
@@ -83,7 +91,7 @@ const labels = {};
 let labelsVisible = true;
 const LABEL_MIN_ZOOM = 11;
 
-// 🔥 Geometry groups
+// Geometry groups
 const pointGroup = L.layerGroup().addTo(map);
 const lineGroup  = L.layerGroup().addTo(map);
 const polyGroup  = L.layerGroup().addTo(map);
@@ -126,48 +134,56 @@ function addLayer(geojson,name){
   layers[name]=fileGroup;
   labels[name]=[];
 
+  let featureBounds = [];
+
   L.geoJSON(geojson,{
-    style:{color:"#ff0000",weight:2},
+    style: function(f){
+      if(f.geometry.type==="Polygon" || f.geometry.type==="MultiPolygon"){
+        return {color:"#e31a1c",weight:2,fillColor:"#e31a1c",fillOpacity:0.4};
+      } else if(f.geometry.type==="LineString" || f.geometry.type==="MultiLineString"){
+        return {color:"#33a02c",weight:3};
+      }
+      return {color:"#0000ff"}; // default
+    },
 
     pointToLayer:(f,ll)=>{
-      const m=L.circleMarker(ll,{radius:5,color:"#ff0000"});
+      const m=L.circleMarker(ll,{radius:5,color:"#1f78b4",fillColor:"#1f78b4",fillOpacity:1});
       pointGroup.addLayer(m);
       fileGroup.addLayer(m);
+      featureBounds.push(m.getLatLng());
       return m;
     },
 
     onEachFeature:(f,layer)=>{
-
       if(layer instanceof L.Polygon){
         polyGroup.addLayer(layer);
         fileGroup.addLayer(layer);
-      }
-      else if(layer instanceof L.Polyline){
+      } else if(layer instanceof L.Polyline){
         lineGroup.addLayer(layer);
         fileGroup.addLayer(layer);
       }
-
-      if(!f.properties?.name) return;
 
       const pos =
         layer.getBounds?.()?.getCenter?.() ||
         layer.getLatLng?.();
 
-      if(!pos) return;
+      if(pos) featureBounds.push(pos);
 
-      const label=L.marker(pos,{
-        icon:L.divIcon({
-          className:"kml-label",
-          html:f.properties.name,
-          iconSize:[200,24]
-        })
-      });
-
-      labels[name].push(label);
-      if(labelsVisible && map.getZoom()>=LABEL_MIN_ZOOM)
-        label.addTo(map);
+      if(f.properties?.name){
+        const label=L.marker(pos,{
+          icon:L.divIcon({className:"kml-label",html:f.properties.name,iconSize:[200,24]})
+        });
+        labels[name].push(label);
+        if(labelsVisible && map.getZoom()>=LABEL_MIN_ZOOM) label.addTo(map);
+      }
     }
   });
+
+  // Auto zoom to file features
+  if(featureBounds.length>0){
+    const bounds = L.latLngBounds(featureBounds);
+    map.fitBounds(bounds,{padding:[40,40]});
+  }
 
   // ---- FILE TOGGLE UI ----
   const row=document.createElement("div");
@@ -176,7 +192,7 @@ function addLayer(geojson,name){
     if(this.checked){
       map.addLayer(fileGroup);
       refreshLabels();
-    }else{
+    } else {
       map.removeLayer(fileGroup);
       labels[name].forEach(l=>map.removeLayer(l));
     }
@@ -234,6 +250,27 @@ map.on("zoomend moveend",refreshLabels);
 function toggleLabels(){
   labelsVisible=!labelsVisible;
   refreshLabels();
+}
+
+// ================= SEARCH =================
+function searchFeature(){
+  const query=document.getElementById("searchBox").value.toLowerCase();
+  if(!query) return;
+
+  let found=false;
+  for(const name in labels){
+    for(const lbl of labels[name]){
+      const text = lbl.getElement()?.innerText?.toLowerCase();
+      if(text && text.includes(query)){
+        const latlng = lbl.getLatLng();
+        map.setView(latlng,16);
+        lbl.openPopup?.();
+        found=true;
+        return;
+      }
+    }
+  }
+  if(!found) alert("Feature not found!");
 }
 </script>
 
