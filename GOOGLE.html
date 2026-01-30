@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>KML / KMZ Viewer – Stable</title>
+<title>KML / KMZ Viewer – Advanced Buffer</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure/Leaflet.PolylineMeasure.css">
@@ -21,39 +21,41 @@ html,body,#map{height:100%;margin:0;}
   box-shadow:0 0 10px rgba(0,0,0,.4);
 }
 
-#layerList div{margin-top:5px;}
-
 .kml-label{
   color:#fff;
   font-weight:bold;
-  white-space:nowrap;
   text-shadow:2px 2px 4px #000;
   pointer-events:none;
 }
 
-#searchBox{width:100%;margin-bottom:5px;}
+input,button{width:100%;margin-top:4px;}
 </style>
 </head>
 
 <body>
 
 <div id="panel">
-  <input type="file" id="fileInput" accept=".kml,.kmz" multiple><br><br>
+  <input type="file" id="fileInput" accept=".kml,.kmz" multiple>
 
-  <input type="text" id="searchBox" placeholder="Search feature name">
-  <button onclick="searchFeature()">Search</button><br><br>
-
-  <button onclick="toggleLabels()">Text ON / OFF</button>
   <hr>
+  <button onclick="toggleLabels()">Text ON / OFF</button>
 
+  <hr>
   <b>Geometry</b><br>
   <input type="checkbox" id="ptChk" checked> Points<br>
   <input type="checkbox" id="lnChk" checked> Lines<br>
   <input type="checkbox" id="pgChk" checked> Polygons
 
   <hr>
-  <b>Files</b>
-  <div id="layerList"></div>
+  <b>🟠 Buffer Tool</b>
+  <input type="number" id="bufDist" value="20" placeholder="Distance (meters)">
+  <label>Color</label>
+  <input type="color" id="bufColor" value="#00ffff">
+  <label>Opacity: <span id="bufValue">0.3</span></label>
+  <input type="range" id="bufOpacity" min="0" max="1" step="0.1" value="0.3">
+
+  <button onclick="createBuffer()">Generate Buffer</button>
+  <button onclick="clearBuffer()">Clear Buffer</button>
 </div>
 
 <div id="map"></div>
@@ -61,66 +63,47 @@ html,body,#map{height:100%;margin:0;}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://unpkg.com/@tmcw/togeojson@5.6.0/dist/togeojson.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure/Leaflet.PolylineMeasure.min.js"></script>
 
 <script>
 // ================= MAP =================
-
-// ✅ SHARP SATELLITE (ESRI CLARITY)
-const satellite = L.tileLayer(
- "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
- { maxZoom:22, maxNativeZoom:19 }
+const satellite=L.tileLayer(
+ "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+ {maxZoom:22}
 );
 
-const map = L.map("map",{
-  center:[22,78],
-  zoom:4,
-  zoomControl:false,
-  zoomSnap:0.25,
-  zoomDelta:0.25,
-  layers:[satellite]
-});
-
-L.control.zoom({position:"topright"}).addTo(map);
-
-// ================= PANES =================
-map.createPane("polygonPane"); map.getPane("polygonPane").style.zIndex=400;
-map.createPane("linePane");    map.getPane("linePane").style.zIndex=500;
-map.createPane("pointPane");   map.getPane("pointPane").style.zIndex=600;
-map.createPane("labelPane");   map.getPane("labelPane").style.zIndex=650;
-
-// ================= MEASURE =================
-L.control.polylineMeasure({
-  position:"topright",
-  unit:"kilometres",
-  showBearings:false,
-  clearMeasurementsOnStop:true
-}).addTo(map);
+// Left zoom buttons remove, only attribution
+const map=L.map("map",{center:[22,78],zoom:4,layers:[satellite],zoomControl:false});
+L.control.attribution({position:"bottomright"}).addTo(map);
+L.control.polylineMeasure({position:"topright"}).addTo(map);
 
 // ================= GLOBAL =================
-const layers={}, labels={};
-let labelsVisible=true;
-const LABEL_MIN_ZOOM=11;
-const POINT_MIN_ZOOM=14;
-
 const pointGroup=L.layerGroup().addTo(map);
 const lineGroup=L.layerGroup().addTo(map);
 const polyGroup=L.layerGroup().addTo(map);
+const bufferGroup=L.layerGroup().addTo(map);
+const labels=[];
 
-// ================= FILE INPUT =================
-fileInput.addEventListener("change",e=>{
+let selectedFeature=null;
+let labelsVisible=true;
+
+const POINT_ZOOM=16;
+const LABEL_ZOOM=13;
+
+// ================= FILE LOAD =================
+fileInput.onchange=e=>{
   [...e.target.files].forEach(f=>{
     if(f.name.endsWith(".kml")) loadKML(f);
     if(f.name.endsWith(".kmz")) loadKMZ(f);
   });
-});
+};
 
-// ================= LOADERS =================
 function loadKML(file){
   const r=new FileReader();
   r.onload=()=>{
     const kml=new DOMParser().parseFromString(r.result,"text/xml");
-    addLayer(toGeoJSON.kml(kml),file.name);
+    addGeo(toGeoJSON.kml(kml));
   };
   r.readAsText(file);
 }
@@ -131,134 +114,118 @@ function loadKMZ(file){
       if(p.endsWith(".kml")){
         e.async("string").then(t=>{
           const kml=new DOMParser().parseFromString(t,"text/xml");
-          addLayer(toGeoJSON.kml(kml),file.name);
+          addGeo(toGeoJSON.kml(kml));
         });
       }
     });
   });
 }
 
-// ================= ADD LAYER =================
-function addLayer(geojson,name){
-  const g=L.layerGroup().addTo(map);
-  layers[name]=g; labels[name]=[];
-  const bounds=[];
-
-  L.geoJSON(geojson,{
+// ================= ADD DATA =================
+function addGeo(gj){
+  L.geoJSON(gj,{
     style:f=>{
       if(f.geometry.type.includes("Polygon"))
-        return {color:"#e31a1c",fillOpacity:0.4,pane:"polygonPane"};
+        return{color:"red",fillOpacity:.3};
       if(f.geometry.type.includes("Line"))
-        return {color:"yellow",weight:3,pane:"linePane"};
+        return{color:"yellow",weight:3};
     },
 
     pointToLayer:(f,ll)=>{
-      let iconUrl = f.properties?.icon || f.properties?.["icon-url"];
-      let marker;
-
-      if(iconUrl){
-        marker = L.marker(ll,{
-          pane:"pointPane",
-          icon:L.icon({
-            iconUrl,
-            iconSize:[22,22],
-            iconAnchor:[11,22]
-          })
-        });
-      }else{
-        marker = L.circleMarker(ll,{
-          radius:4,
-          color:"#1f78b4",
-          fillOpacity:1,
-          pane:"pointPane"
-        });
-      }
-
-      pointGroup.addLayer(marker);
-      g.addLayer(marker);
-      bounds.push(ll);
-      return marker;
+      const m=L.marker(ll,{
+        icon:L.icon({
+          iconUrl:"https://cdn-icons-png.flaticon.com/512/252/252025.png",
+          iconSize:[14,14],
+          iconAnchor:[7,14]
+        })
+      });
+      pointGroup.addLayer(m);
+      return m;
     },
 
     onEachFeature:(f,l)=>{
       if(l instanceof L.Polygon) polyGroup.addLayer(l);
       if(l instanceof L.Polyline) lineGroup.addLayer(l);
 
-      g.addLayer(l);
-
-      const pos=l.getBounds?.()?.getCenter?.()||l.getLatLng?.();
-      if(pos) bounds.push(pos);
+      // ⭐ SELECT FEATURE FOR BUFFER
+      l.on("click",()=>{
+        selectedFeature=l;
+        l.setStyle?.({color:"#00ff00"});
+      });
 
       if(f.properties?.name){
-        const lbl=L.marker(pos,{
-          pane:"labelPane",
-          icon:L.divIcon({className:"kml-label",html:f.properties.name})
-        });
-        labels[name].push(lbl);
-        if(labelsVisible && map.getZoom()>=LABEL_MIN_ZOOM) lbl.addTo(map);
+        const lbl=L.marker(
+          l.getBounds?.()?.getCenter?.()||l.getLatLng(),
+          {icon:L.divIcon({className:"kml-label",html:f.properties.name})}
+        );
+        labels.push(lbl);
       }
     }
-  });
+  }).addTo(map);
 
-  if(bounds.length) map.fitBounds(L.latLngBounds(bounds),{padding:[40,40]});
-
-  const row=document.createElement("div");
-  row.innerHTML=`<input type="checkbox" checked> ${name}`;
-  row.querySelector("input").onchange=e=>{
-    e.target.checked?map.addLayer(g):map.removeLayer(g);
-    refreshLabels();
-  };
-  layerList.appendChild(row);
-
-  refreshLabels();
+  refreshVisibility();
 }
 
-// ================= POINT ZOOM CONTROL =================
-map.on("zoomend",()=>{
+// ================= ZOOM VISIBILITY =================
+function refreshVisibility(){
   const z=map.getZoom();
-  pointGroup.eachLayer(l=>{
-    if(z>=POINT_MIN_ZOOM){
-      if(!map.hasLayer(l)) map.addLayer(l);
-    }else{
-      if(map.hasLayer(l)) map.removeLayer(l);
-    }
-  });
-});
 
-// ================= GEOMETRY TOGGLE =================
-ptChk.onchange=()=>toggle(pointGroup,ptChk.checked);
-lnChk.onchange=()=>toggle(lineGroup,lnChk.checked);
-pgChk.onchange=()=>toggle(polyGroup,pgChk.checked);
-function toggle(g,on){on?map.addLayer(g):map.removeLayer(g);refreshLabels();}
+  if(ptChk.checked && z>=POINT_ZOOM) map.addLayer(pointGroup);
+  else map.removeLayer(pointGroup);
 
-// ================= LABEL DECLUTTER =================
-function refreshLabels(){
-  const zoom=map.getZoom(), drawn=[];
-  Object.values(labels).flat().forEach(l=>map.removeLayer(l));
-  if(!labelsVisible||zoom<LABEL_MIN_ZOOM) return;
+  lnChk.checked?map.addLayer(lineGroup):map.removeLayer(lineGroup);
+  pgChk.checked?map.addLayer(polyGroup):map.removeLayer(polyGroup);
 
-  for(const k in labels){
-    if(!map.hasLayer(layers[k])) continue;
-    labels[k].forEach(l=>{
-      const p=map.latLngToContainerPoint(l.getLatLng());
-      const box={x:p.x-60,y:p.y-12,w:120,h:24};
-      if(drawn.some(b=>!(box.x>b.x+b.w||box.x+box.w<b.x||box.y>b.y+b.h||box.y+box.h<b.y))) return;
-      map.addLayer(l); drawn.push(box);
-    });
-  }
+  labels.forEach(l=>map.removeLayer(l));
+  if(labelsVisible && z>=LABEL_ZOOM)
+    labels.forEach(l=>map.addLayer(l));
 }
 
-map.on("zoomend moveend",refreshLabels);
-function toggleLabels(){labelsVisible=!labelsVisible;refreshLabels();}
+map.on("zoomend",refreshVisibility);
+ptChk.onchange=refreshVisibility;
+lnChk.onchange=refreshVisibility;
+pgChk.onchange=refreshVisibility;
 
-// ================= SEARCH =================
-function searchFeature(){
-  const q=searchBox.value.toLowerCase();
-  for(const k in labels)
-    for(const l of labels[k])
-      if(l.options.icon.options.html.toLowerCase().includes(q))
-        return map.setView(l.getLatLng(),16);
-  alert("Feature not found");
+function toggleLabels(){
+  labelsVisible=!labelsVisible;
+  refreshVisibility();
+}
+
+// ================= BUFFER =================
+const bufSlider=document.getElementById("bufOpacity");
+const bufValue=document.getElementById("bufValue");
+bufSlider.oninput=()=>{ bufValue.innerText=bufSlider.value; };
+
+function createBuffer(){
+  bufferGroup.clearLayers();
+
+  const dist=Number(bufDist.value)/1000;
+  const color=bufColor.value;
+  const op=Number(bufOpacity.value);
+
+  const targets = selectedFeature
+    ? [selectedFeature]
+    : [...pointGroup.getLayers(),
+       ...lineGroup.getLayers(),
+       ...polyGroup.getLayers()];
+
+  targets.forEach(l=>{
+    const gj=l.toGeoJSON();
+    const buf=turf.buffer(gj,dist,{units:"kilometers"});
+
+    L.geoJSON(buf,{
+      style:{
+        color:color,
+        weight:2,
+        fillOpacity:op
+      }
+    }).addTo(bufferGroup);
+  });
+}
+
+function clearBuffer(){
+  bufferGroup.clearLayers();
+  selectedFeature=null;
 }
 </script>
 
