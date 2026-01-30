@@ -27,6 +27,7 @@ html,body,#map{height:100%;margin:0;}
   text-shadow:2px 2px 4px #000;
   pointer-events:none;
   white-space:nowrap;
+  font-size:12px;
 }
 
 input,button{width:100%;margin-top:4px;}
@@ -49,8 +50,7 @@ input,button{width:100%;margin-top:4px;}
 
   <hr>
   <b>🟠 Buffer Tool</b>
-  <input type="number" id="bufDist" value="20" placeholder="Distance (meters)">
-  <label>Color</label>
+  <input type="number" id="bufDist" value="20">
   <input type="color" id="bufColor" value="#00ffff">
   <label>Opacity: <span id="bufValue">0.3</span></label>
   <input type="range" id="bufOpacity" min="0" max="1" step="0.1" value="0.3">
@@ -81,7 +81,8 @@ const map=L.map("map",{
   center:[22,78],
   zoom:4,
   layers:[satellite],
-  zoomControl:false
+  zoomControl:false,
+  preferCanvas:true
 });
 
 L.control.polylineMeasure({position:"topright"}).addTo(map);
@@ -91,13 +92,28 @@ const pointGroup=L.layerGroup().addTo(map);
 const lineGroup=L.layerGroup().addTo(map);
 const polyGroup=L.layerGroup().addTo(map);
 const bufferGroup=L.layerGroup().addTo(map);
+
 const labels=[];
-
+let visibleLabels=[];
 let selectedFeatures=[];
-let labelsVisible=false;   // ⭐ DEFAULT OFF
+let labelsVisible=false;
+let currentZoom=null;  // TRACK CURRENT ZOOM FOR TEXT PERSISTENCE
 
-const POINT_ZOOM=16;
-const LABEL_ZOOM=14;
+const POINT_ZOOM=14;
+const LABEL_ZOOM=15;
+
+// ================= SAFE FIT =================
+function safeFitBounds(layer){
+  let b=L.latLngBounds([]);
+  layer.eachLayer(l=>{
+    if(l.getLatLng) b.extend(l.getLatLng());
+    else if(l.getBounds) b.extend(l.getBounds());
+  });
+  if(b.isValid()){
+    map.fitBounds(b,{padding:[40,40]});
+    if(map.getZoom()>=LABEL_ZOOM) map.setZoom(LABEL_ZOOM-1);
+  }
+}
 
 // ================= FILE LOAD =================
 fileInput.onchange=e=>{
@@ -109,11 +125,9 @@ fileInput.onchange=e=>{
 
 function loadKML(file){
   const r=new FileReader();
-  r.onload=()=>{
-    addGeo(toGeoJSON.kml(
-      new DOMParser().parseFromString(r.result,"text/xml")
-    ));
-  };
+  r.onload=()=>addGeo(
+    toGeoJSON.kml(new DOMParser().parseFromString(r.result,"text/xml"))
+  );
   r.readAsText(file);
 }
 
@@ -142,7 +156,13 @@ function addGeo(gj){
     },
 
     pointToLayer:(f,ll)=>{
-      const m=L.marker(ll);
+      const m=L.circleMarker(ll,{
+        radius:5,
+        color:"#ffffff",
+        weight:1.5,
+        fillColor:"#2ea8ff",
+        fillOpacity:0.9
+      });
       pointGroup.addLayer(m);
       return m;
     },
@@ -151,7 +171,6 @@ function addGeo(gj){
       if(l instanceof L.Polygon) polyGroup.addLayer(l);
       if(l instanceof L.Polyline) lineGroup.addLayer(l);
 
-      // MULTI SELECTION
       l.on("click",()=>{
         if(selectedFeatures.includes(l)){
           selectedFeatures=selectedFeatures.filter(x=>x!==l);
@@ -163,26 +182,56 @@ function addGeo(gj){
       });
 
       if(f.properties?.name){
-        const lbl=L.marker(
-          l.getBounds?.()?.getCenter?.()||l.getLatLng(),
-          {icon:L.divIcon({className:"kml-label",html:f.properties.name})}
+        labels.push(
+          L.marker(
+            l.getBounds?.()?.getCenter?.()||l.getLatLng(),
+            {icon:L.divIcon({className:"kml-label",html:f.properties.name})}
+          )
         );
-        labels.push(lbl);
       }
     }
   }).addTo(map);
 
-  // AUTO ZOOM but SAFE (labels nahi dikhenge)
-  map.fitBounds(layer.getBounds(),{padding:[40,40]});
-  if(map.getZoom()>=LABEL_ZOOM) map.setZoom(LABEL_ZOOM-1);
-
+  setTimeout(()=>safeFitBounds(layer),100);
   refreshVisibility();
+}
+
+// ================= SMART LABEL ENGINE =================
+function updateLabels(){
+  visibleLabels.forEach(l=>map.removeLayer(l));
+  visibleLabels=[];
+
+  if(!labelsVisible) return;
+
+  const bounds=map.getBounds();
+  const taken=[];
+
+  for(const lbl of labels){
+    if(!bounds.contains(lbl.getLatLng())) continue;
+
+    map.addLayer(lbl);
+    const el=lbl.getElement();
+    if(!el) continue;
+
+    const r=el.getBoundingClientRect();
+    const overlap=taken.some(t=>
+      !(r.right<t.left || r.left>t.right || r.bottom<t.top || r.top>t.bottom)
+    );
+
+    if(overlap){
+      map.removeLayer(lbl);
+    }else{
+      taken.push(r);
+      visibleLabels.push(lbl);
+    }
+  }
 }
 
 // ================= VISIBILITY =================
 function refreshVisibility(){
   const z=map.getZoom();
 
+  // Points / Lines / Polygons visibility
   z>=POINT_ZOOM && ptChk.checked
     ? map.addLayer(pointGroup)
     : map.removeLayer(pointGroup);
@@ -190,19 +239,32 @@ function refreshVisibility(){
   lnChk.checked?map.addLayer(lineGroup):map.removeLayer(lineGroup);
   pgChk.checked?map.addLayer(polyGroup):map.removeLayer(polyGroup);
 
-  labels.forEach(l=>map.removeLayer(l));
-  if(labelsVisible && z>=LABEL_ZOOM)
-    labels.forEach(l=>map.addLayer(l));
+  // Labels smart engine
+  if(z !== currentZoom){
+    currentZoom=z;      // update zoom
+    labelsVisible=false; // reset text ON for new zoom
+  }
+
+  if(labelsVisible && z>=LABEL_ZOOM){
+    setTimeout(updateLabels,60);
+  }else{
+    visibleLabels.forEach(l=>map.removeLayer(l));
+    visibleLabels=[];
+  }
 }
 
 map.on("zoomend",refreshVisibility);
+map.on("moveend",refreshVisibility);
 ptChk.onchange=refreshVisibility;
 lnChk.onchange=refreshVisibility;
 pgChk.onchange=refreshVisibility;
 
+// Toggle labels
 function toggleLabels(){
-  labelsVisible=!labelsVisible;
-  refreshVisibility();
+  if(map.getZoom() >= LABEL_ZOOM){
+    labelsVisible=true;  // ON for current zoom
+    refreshVisibility();
+  }
 }
 
 // ================= BUFFER =================
@@ -218,10 +280,10 @@ function createBuffer(){
     : [...pointGroup.getLayers(),...lineGroup.getLayers(),...polyGroup.getLayers()];
 
   targets.forEach(l=>{
-    const buffer=turf.buffer(l.toGeoJSON(),dist,{units:"kilometers"});
-    totalArea+=turf.area(buffer);
+    const buf=turf.buffer(l.toGeoJSON(),dist,{units:"kilometers"});
+    totalArea+=turf.area(buf);
 
-    L.geoJSON(buffer,{
+    L.geoJSON(buf,{
       style:{
         color:bufColor.value,
         weight:2,
@@ -230,14 +292,13 @@ function createBuffer(){
     }).addTo(bufferGroup);
   });
 
-  document.getElementById("bufArea").innerText=
-    totalArea.toFixed(2)+" sqm";
+  bufArea.innerText=totalArea.toFixed(2)+" sqm";
 }
 
 function clearBuffer(){
   bufferGroup.clearLayers();
   selectedFeatures=[];
-  document.getElementById("bufArea").innerText="0 sqm";
+  bufArea.innerText="0 sqm";
 }
 </script>
 
