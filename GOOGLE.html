@@ -2,20 +2,30 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>KML / KMZ Viewer – Stable</title>
+<title>KML / KMZ Viewer – 2D + Real 3D</title>
 
+<!-- LEAFLET -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-
-<!-- ✅ NEW MEASURE TOOL -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure/Leaflet.PolylineMeasure.css">
 
+<!-- CESIUM -->
+<link href="https://unpkg.com/cesium/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
 <style>
-html,body,#map{height:100%;margin:0;}
+html,body{height:100%;margin:0;}
+
+#map,#cesiumContainer{
+  position:absolute;
+  top:0; left:0;
+  width:100%; height:100%;
+}
+
+#cesiumContainer{display:none;}
 
 #panel{
   position:absolute;
   top:10px; left:10px;
-  z-index:1000;
+  z-index:2000;
   background:#fff;
   padding:10px;
   width:280px;
@@ -23,17 +33,14 @@ html,body,#map{height:100%;margin:0;}
   box-shadow:0 0 10px rgba(0,0,0,.4);
 }
 
-#layerList div{margin-top:5px;}
-
 .kml-label{
   color:#fff;
   font-weight:bold;
-  white-space:nowrap;
   text-shadow:2px 2px 4px #000;
   pointer-events:none;
 }
 
-#searchBox{width:100%;margin-bottom:5px;}
+#heightSlider{width:100%;}
 </style>
 </head>
 
@@ -42,176 +49,95 @@ html,body,#map{height:100%;margin:0;}
 <div id="panel">
   <input type="file" id="fileInput" accept=".kml,.kmz" multiple><br><br>
 
-  <input type="text" id="searchBox" placeholder="Search feature name">
-  <button onclick="searchFeature()">Search</button><br><br>
+  <button onclick="toggle3D()">🧱 3D View</button>
+  <button onclick="exit3D()">⬅ 2D View</button>
 
-  <button onclick="toggleLabels()">Text ON / OFF</button>
-  <hr>
-
-  <b>Geometry</b><br>
-  <input type="checkbox" id="ptChk" checked> Points<br>
-  <input type="checkbox" id="lnChk" checked> Lines<br>
-  <input type="checkbox" id="pgChk" checked> Polygons
-
-  <hr>
-  <b>Files</b>
-  <div id="layerList"></div>
+  <div id="heightPanel" style="display:none;">
+    <hr>
+    Building Height
+    <input type="range" id="heightSlider" min="10" max="300" value="50">
+  </div>
 </div>
 
 <div id="map"></div>
+<div id="cesiumContainer"></div>
 
+<!-- JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://unpkg.com/@tmcw/togeojson@5.6.0/dist/togeojson.umd.js"></script>
-
-<!-- ✅ NEW MEASURE TOOL -->
 <script src="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure/Leaflet.PolylineMeasure.min.js"></script>
 
-<script>
-// ================= MAP =================
-const satellite = L.tileLayer(
- "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
- { maxZoom:22, maxNativeZoom:19 }
-);
+<script src="https://unpkg.com/cesium/Build/Cesium/Cesium.js"></script>
 
-const map = L.map("map",{
-  center:[22,78],
-  zoom:4,
-  zoomControl:false,
-  zoomSnap:0.25,
-  zoomDelta:0.25,
-  layers:[satellite]
+<script>
+// ================= LEAFLET MAP =================
+const map = L.map("map",{center:[22,78],zoom:4});
+L.tileLayer(
+ "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+ {maxZoom:22,maxNativeZoom:19}
+).addTo(map);
+
+// ================= CESIUM =================
+Cesium.Ion.defaultAccessToken = ""; // optional
+
+const viewer = new Cesium.Viewer("cesiumContainer",{
+  terrainProvider: Cesium.createWorldTerrain(),
+  timeline:false,
+  animation:false
 });
 
-L.control.zoom({position:"topright"}).addTo(map);
+let cesiumDataSource=null;
 
-// ================= ✅ STABLE MEASUREMENT =================
-L.control.polylineMeasure({
-  position:"topright",
-  unit:"kilometres",
-  showBearings:false,
-  clearMeasurementsOnStop:true,
-  showClearControl:true,
-  showUnitControl:true
-}).addTo(map);
-
-// ================= GLOBAL =================
-const layers={}, labels={};
-let labelsVisible=true;
-const LABEL_MIN_ZOOM=11;
-
-const pointGroup=L.layerGroup().addTo(map);
-const lineGroup=L.layerGroup().addTo(map);
-const polyGroup=L.layerGroup().addTo(map);
-
-// ================= FILE INPUT =================
+// ================= FILE LOAD =================
 fileInput.addEventListener("change",e=>{
   [...e.target.files].forEach(f=>{
-    if(f.name.endsWith(".kml")) loadKML(f);
-    if(f.name.endsWith(".kmz")) loadKMZ(f);
+    loadInCesium(f);
   });
 });
 
-// ================= LOADERS =================
-function loadKML(file){
-  const r=new FileReader();
-  r.onload=()=>{
-    const kml=new DOMParser().parseFromString(r.result,"text/xml");
-    addLayer(toGeoJSON.kml(kml),file.name);
-  };
-  r.readAsText(file);
-}
-
-function loadKMZ(file){
-  JSZip.loadAsync(file).then(zip=>{
-    zip.forEach((p,e)=>{
-      if(p.endsWith(".kml")){
-        e.async("string").then(t=>{
-          const kml=new DOMParser().parseFromString(t,"text/xml");
-          addLayer(toGeoJSON.kml(kml),file.name);
-        });
-      }
-    });
+function loadInCesium(file){
+  const url = URL.createObjectURL(file);
+  Cesium.KmlDataSource.load(url,{
+    camera:viewer.scene.camera,
+    canvas:viewer.scene.canvas,
+    clampToGround:false
+  }).then(ds=>{
+    if(cesiumDataSource) viewer.dataSources.remove(cesiumDataSource);
+    cesiumDataSource=ds;
+    viewer.dataSources.add(ds);
+    viewer.zoomTo(ds);
+    applyHeight();
   });
 }
 
-// ================= ADD LAYER =================
-function addLayer(geojson,name){
-  const g=L.layerGroup().addTo(map);
-  layers[name]=g; labels[name]=[];
-  const bounds=[];
+// ================= HEIGHT =================
+heightSlider.oninput=applyHeight;
 
-  L.geoJSON(geojson,{
-    style:f=>{
-      if(f.geometry.type.includes("Polygon"))
-        return {color:"#e31a1c",fillOpacity:0.4};
-      if(f.geometry.type.includes("Line"))
-        return {color:"yellow",weight:3};
-    },
+function applyHeight(){
+  if(!cesiumDataSource) return;
+  const h=+heightSlider.value;
 
-    pointToLayer:(f,ll)=>{
-      const m=L.circleMarker(ll,{radius:5,color:"#1f78b4",fillOpacity:1});
-      pointGroup.addLayer(m); g.addLayer(m);
-      bounds.push(ll); return m;
-    },
-
-    onEachFeature:(f,l)=>{
-      if(l instanceof L.Polygon) polyGroup.addLayer(l);
-      if(l instanceof L.Polyline) lineGroup.addLayer(l);
-      g.addLayer(l);
-
-      const pos=l.getBounds?.()?.getCenter?.()||l.getLatLng?.();
-      if(pos) bounds.push(pos);
-
-      if(f.properties?.name){
-        const lbl=L.marker(pos,{icon:L.divIcon({className:"kml-label",html:f.properties.name})});
-        labels[name].push(lbl);
-        if(labelsVisible && map.getZoom()>=LABEL_MIN_ZOOM) lbl.addTo(map);
-      }
+  cesiumDataSource.entities.values.forEach(e=>{
+    if(e.polygon){
+      e.polygon.extrudedHeight = h;
+      e.polygon.material = Cesium.Color.ORANGE.withAlpha(0.6);
     }
   });
-
-  if(bounds.length) map.fitBounds(L.latLngBounds(bounds),{padding:[40,40]});
-
-  const row=document.createElement("div");
-  row.innerHTML=`<input type="checkbox" checked> ${name}`;
-  row.querySelector("input").onchange=e=>{
-    e.target.checked?map.addLayer(g):map.removeLayer(g);
-    refreshLabels();
-  };
-  layerList.appendChild(row);
-
-  refreshLabels();
 }
 
-// ================= LABEL DECLUTTER =================
-function refreshLabels(){
-  const zoom=map.getZoom(), drawn=[];
-  Object.values(labels).flat().forEach(l=>map.removeLayer(l));
-  if(!labelsVisible||zoom<LABEL_MIN_ZOOM) return;
-
-  for(const k in labels){
-    if(!map.hasLayer(layers[k])) continue;
-    labels[k].forEach(l=>{
-      const p=map.latLngToContainerPoint(l.getLatLng());
-      const box={x:p.x-60,y:p.y-12,w:120,h:24};
-      if(drawn.some(b=>!(box.x>b.x+b.w||box.x+box.w<b.x||box.y>b.y+b.h||box.y+box.h<b.y))) return;
-      map.addLayer(l); drawn.push(box);
-    });
-  }
+// ================= MODE TOGGLE =================
+function toggle3D(){
+  map.getContainer().style.display="none";
+  cesiumContainer.style.display="block";
+  heightPanel.style.display="block";
+  viewer.resize();
 }
 
-map.on("zoomend moveend",refreshLabels);
-function toggleLabels(){labelsVisible=!labelsVisible;refreshLabels();}
-
-// ================= SEARCH =================
-function searchFeature(){
-  const q=searchBox.value.toLowerCase();
-  for(const k in labels)
-    for(const l of labels[k])
-      if(l.options.icon.options.html.toLowerCase().includes(q))
-        return map.setView(l.getLatLng(),16);
-  alert("Feature not found");
+function exit3D(){
+  cesiumContainer.style.display="none";
+  map.getContainer().style.display="block";
+  heightPanel.style.display="none";
 }
 </script>
 
