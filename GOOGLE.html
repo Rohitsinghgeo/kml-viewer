@@ -65,8 +65,10 @@ html,body,#map{height:100%;margin:0;}
 
 <script>
 // ================= MAP =================
+
+// ✅ SHARP SATELLITE (ESRI CLARITY)
 const satellite = L.tileLayer(
- "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+ "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
  { maxZoom:22, maxNativeZoom:19 }
 );
 
@@ -81,7 +83,7 @@ const map = L.map("map",{
 
 L.control.zoom({position:"topright"}).addTo(map);
 
-// ================= PANES (ORDER FIX) =================
+// ================= PANES =================
 map.createPane("polygonPane"); map.getPane("polygonPane").style.zIndex=400;
 map.createPane("linePane");    map.getPane("linePane").style.zIndex=500;
 map.createPane("pointPane");   map.getPane("pointPane").style.zIndex=600;
@@ -99,6 +101,7 @@ L.control.polylineMeasure({
 const layers={}, labels={};
 let labelsVisible=true;
 const LABEL_MIN_ZOOM=11;
+const POINT_MIN_ZOOM=14;
 
 const pointGroup=L.layerGroup().addTo(map);
 const lineGroup=L.layerGroup().addTo(map);
@@ -142,63 +145,49 @@ function addLayer(geojson,name){
   const bounds=[];
 
   L.geoJSON(geojson,{
-    pane:"polygonPane",
-
     style:f=>{
-      if(f.geometry.type.includes("Polygon")){
-        return {
-          color:"#e31a1c",
-          fillOpacity:0.4,
-          pane:"polygonPane"
-        };
-      }
-      if(f.geometry.type.includes("Line")){
-        return {
-          color:"yellow",
-          weight:3,
-          pane:"linePane"
-        };
-      }
+      if(f.geometry.type.includes("Polygon"))
+        return {color:"#e31a1c",fillOpacity:0.4,pane:"polygonPane"};
+      if(f.geometry.type.includes("Line"))
+        return {color:"yellow",weight:3,pane:"linePane"};
     },
 
-    // 📍 POINT ICON FROM KML
     pointToLayer:(f,ll)=>{
       let iconUrl = f.properties?.icon || f.properties?.["icon-url"];
-      let icon = iconUrl
-        ? L.icon({
+      let marker;
+
+      if(iconUrl){
+        marker = L.marker(ll,{
+          pane:"pointPane",
+          icon:L.icon({
             iconUrl,
-            iconSize:[32,32],
-            iconAnchor:[16,32]
+            iconSize:[22,22],
+            iconAnchor:[11,22]
           })
-        : null;
+        });
+      }else{
+        marker = L.circleMarker(ll,{
+          radius:4,
+          color:"#1f78b4",
+          fillOpacity:1,
+          pane:"pointPane"
+        });
+      }
 
-      const m = icon
-        ? L.marker(ll,{icon,pane:"pointPane"})
-        : L.circleMarker(ll,{radius:5,color:"#1f78b4",pane:"pointPane"});
-
-      pointGroup.addLayer(m);
-      g.addLayer(m);
+      pointGroup.addLayer(marker);
+      g.addLayer(marker);
       bounds.push(ll);
-      return m;
+      return marker;
     },
 
     onEachFeature:(f,l)=>{
-      if(l instanceof L.Polygon){
-        polyGroup.addLayer(l);
-      }
-      if(l instanceof L.Polyline){
-        lineGroup.addLayer(l);
-      }
+      if(l instanceof L.Polygon) polyGroup.addLayer(l);
+      if(l instanceof L.Polyline) lineGroup.addLayer(l);
 
       g.addLayer(l);
 
       const pos=l.getBounds?.()?.getCenter?.()||l.getLatLng?.();
       if(pos) bounds.push(pos);
-
-      // 🗺️ GOOGLE-EARTH STYLE EXTRUSION (VISUAL)
-      if(f.geometry.type.includes("Polygon") && f.properties?.height){
-        l.setStyle({fillOpacity:0.6});
-      }
 
       if(f.properties?.name){
         const lbl=L.marker(pos,{
@@ -224,15 +213,23 @@ function addLayer(geojson,name){
   refreshLabels();
 }
 
+// ================= POINT ZOOM CONTROL =================
+map.on("zoomend",()=>{
+  const z=map.getZoom();
+  pointGroup.eachLayer(l=>{
+    if(z>=POINT_MIN_ZOOM){
+      if(!map.hasLayer(l)) map.addLayer(l);
+    }else{
+      if(map.hasLayer(l)) map.removeLayer(l);
+    }
+  });
+});
+
 // ================= GEOMETRY TOGGLE =================
 ptChk.onchange=()=>toggle(pointGroup,ptChk.checked);
 lnChk.onchange=()=>toggle(lineGroup,lnChk.checked);
 pgChk.onchange=()=>toggle(polyGroup,pgChk.checked);
-
-function toggle(g,on){
-  on?map.addLayer(g):map.removeLayer(g);
-  refreshLabels();
-}
+function toggle(g,on){on?map.addLayer(g):map.removeLayer(g);refreshLabels();}
 
 // ================= LABEL DECLUTTER =================
 function refreshLabels(){
