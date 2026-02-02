@@ -189,6 +189,10 @@ tr:hover{
 <div class="section">
 <h3 onclick="toggleSection(this)">📋 Attribute Table</h3>
 <div class="content">
+
+<input id="attrSearchInput" placeholder="Search attribute (search your text)">
+<button onclick="searchByAttribute()">Search</button>
+
 <select id="attrFilter" onchange="refreshTable()">
 <option value="all">All</option>
 <option value="point">Points</option>
@@ -435,6 +439,53 @@ function toggleSection(h){
   const c=h.nextElementSibling;
   c.style.display=c.style.display==="block"?"none":"block";
 }
+
+function searchByAttribute(){
+  const text = document.getElementById("attrSearchInput").value
+               .toLowerCase().trim();
+
+  if(!text){
+    alert("Enter text to search");
+    return;
+  }
+
+  let found = false;
+
+  allFeatures.forEach(o=>{
+    const props = o.feature?.properties;
+    if(!props) return;
+
+    for(const k in props){
+      const val = String(props[k]).toLowerCase();
+
+      if(val.includes(text)){
+        found = true;
+
+        // zoom to feature
+        if(o.layer.getBounds){
+          map.fitBounds(o.layer.getBounds(), {padding:[40,40]});
+        }else if(o.layer.getLatLng){
+          map.setView(o.layer.getLatLng(), 16);
+        }
+
+        // highlight
+        if(o.layer.setStyle){
+          o.layer.setStyle({color:"#00ff00", weight:5});
+        }
+
+        // popup
+        if(o.layer.bindPopup){
+          o.layer.bindPopup(`<b>${k}</b>: ${props[k]}`).openPopup();
+        }
+      }
+    }
+  });
+
+  if(!found){
+    alert("No matching attribute found");
+  }
+}
+
 </script>
 
 </body>
