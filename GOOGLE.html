@@ -218,9 +218,16 @@ tr:hover{
 <script>
 // ================= MAP =================
 const map=L.map("map",{center:[22,78],zoom:4, zoomControl: false});
-L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:22}).addTo(map);
-L.control.zoom({position:"topright"}).addTo(map);
-L.control.polylineMeasure({position:"topright",unit:"meters"}).addTo(map);
+const imagery = L.tileLayer(
+ "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+ { maxZoom: 22 }
+).addTo(map);
+
+const labels = L.tileLayer(
+ "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+ { maxZoom: 22 }
+).addTo(map);
+
 
 // ================= GROUPS =================
 const pointGroup=L.layerGroup().addTo(map);
@@ -490,3 +497,4 @@ function searchByAttribute(){
 
 </body>
 </html>
+
