@@ -160,6 +160,16 @@ tr:hover{
     </div>
   </div>
 
+  <div class="section">
+  <h3 onclick="toggleSection(this)">⬇ Export Drawings</h3>
+  <div class="content">
+    <button onclick="exportDrawKML()">Export Drawings → KML</button>
+    <button onclick="exportDrawKMZ()">Export Drawings → KMZ</button>
+  </div>
+  </div> 
+
+
+
 
 
 <div class="section">
@@ -231,6 +241,7 @@ tr:hover{
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure/Leaflet.PolylineMeasure.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tokml@0.4.0/tokml.js"></script>
 
 <script>
 // ================= MAP =================
@@ -542,6 +553,52 @@ function searchPlace(){
     })
     .catch(() => alert("Search error"));
 }
+
+function exportDrawKML(){
+  if(drawGroup.getLayers().length === 0){
+    alert("No drawings to export");
+    return;
+  }
+
+  const geojson = drawGroup.toGeoJSON();
+
+  const kml = tokml(geojson, {
+    name: "name",
+    description: "name"
+  });
+
+  downloadFile(
+    new Blob([kml], {type: "application/vnd.google-earth.kml+xml"}),
+    "drawings.kml"
+  );
+}
+
+function exportDrawKMZ(){
+  if(drawGroup.getLayers().length === 0){
+    alert("No drawings to export");
+    return;
+  }
+
+  const geojson = drawGroup.toGeoJSON();
+  const kml = tokml(geojson);
+
+  const zip = new JSZip();
+  zip.file("drawings.kml", kml);
+
+  zip.generateAsync({type:"blob"}).then(content=>{
+    downloadFile(content, "drawings.kmz");
+  });
+}
+
+function downloadFile(blob, filename){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 
 
 </script>
