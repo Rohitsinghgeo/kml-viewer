@@ -180,6 +180,16 @@ tr:hover{
 </div>
 
 <div class="section">
+  <h3 onclick="toggleSection(this)">🗂 Loaded KML / KMZ Files</h3>
+  <div class="content" id="fileList">
+    <div style="font-size:12px;color:#6b7280;">
+      No file loaded
+    </div>
+  </div>
+</div>
+
+
+<div class="section">
 <h3 onclick="toggleSection(this)">👁 Visibility</h3>
 <div class="content">
 <div class="row"><span>Points</span><input type="checkbox" id="ptChk" checked></div>
@@ -270,6 +280,10 @@ const polyLabelGroup=L.layerGroup();
 
 let allFeatures=[], selected=[];
 
+// ================= FILE REGISTRY =================
+const loadedFiles = [];
+
+
 // ================= DRAW =================
 map.addControl(new L.Control.Draw({
 position: "topright",
@@ -316,7 +330,13 @@ fileInput.onchange=e=>{
 
 function loadKML(f){
   const r=new FileReader();
-  r.onload=()=>addGeo(toGeoJSON.kml(new DOMParser().parseFromString(r.result,"text/xml")));
+  r.onload=()=>{
+  const geo = toGeoJSON.kml(
+    new DOMParser().parseFromString(r.result,"text/xml")
+  );
+  addGeoFile(geo, f.name);
+};
+
   r.readAsText(f);
 }
 function loadKMZ(f){
@@ -324,7 +344,11 @@ function loadKMZ(f){
     z.forEach((p,e)=>{
       if(p.endsWith(".kml")){
         e.async("string").then(t=>{
-          addGeo(toGeoJSON.kml(new DOMParser().parseFromString(t,"text/xml")));
+          const geo = toGeoJSON.kml(
+  new DOMParser().parseFromString(t,"text/xml")
+);
+addGeoFile(geo, f.name);
+
         });
       }
     });
@@ -332,6 +356,49 @@ function loadKMZ(f){
 }
 
 // ================= ADD GEO =================
+function addGeoFile(geojson, filename){
+
+  const fileGroup = L.layerGroup().addTo(map);
+
+  const layer = L.geoJSON(geojson,{
+    pointToLayer:(f,ll)=>{
+      const m=L.circleMarker(ll,{radius:5,color:"#fff",fillColor:"#2ea8ff",fillOpacity:.9});
+      fileGroup.addLayer(m);
+      pointGroup.addLayer(m);
+      register(m,"point",f);
+      return m;
+    },
+    onEachFeature:(f,l)=>{
+      if(l instanceof L.Polygon){
+        l.setStyle({color:"red",fillOpacity:.3});
+        fileGroup.addLayer(l);
+        polyGroup.addLayer(l);
+        register(l,"polygon",f);
+      }
+      else if(l instanceof L.Polyline){
+        l.setStyle({color:"yellow",weight:3});
+        fileGroup.addLayer(l);
+        lineGroup.addLayer(l);
+        register(l,"line",f);
+      }
+    }
+  });
+
+  map.fitBounds(layer.getBounds(),{padding:[40,40]});
+
+  // save file reference
+  const fileObj = {
+    name: filename,
+    group: fileGroup,
+    visible: true
+  };
+  loadedFiles.push(fileObj);
+
+  refreshFileList();
+  refreshTable();
+}
+
+
 function addGeo(gj){
   const layer=L.geoJSON(gj,{
     pointToLayer:(f,ll)=>{
@@ -598,6 +665,49 @@ function downloadFile(blob, filename){
   a.click();
   document.body.removeChild(a);
 }
+
+function refreshFileList(){
+  const box = document.getElementById("fileList");
+  box.innerHTML = "";
+
+  if(!loadedFiles.length){
+    box.innerHTML = `<div style="font-size:12px;color:#6b7280;">No file loaded</div>`;
+    return;
+  }
+
+  loadedFiles.forEach((f,i)=>{
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const name = document.createElement("span");
+    name.innerText = f.name;
+    name.style.fontSize = "12px";
+
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = f.visible;
+    chk.onchange = ()=>{
+      f.visible = chk.checked;
+      if(f.visible) map.addLayer(f.group);
+      else map.removeLayer(f.group);
+    };
+
+    const del = document.createElement("button");
+    del.innerText = "❌";
+    del.style.width="36px";
+    del.onclick = ()=>{
+      map.removeLayer(f.group);
+      loadedFiles.splice(i,1);
+      refreshFileList();
+    };
+
+    row.appendChild(name);
+    row.appendChild(chk);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
 
 
 
