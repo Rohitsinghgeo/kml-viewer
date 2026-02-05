@@ -31,6 +31,9 @@ html,body,#map{
   overflow:auto;
 }
 
+
+
+
 /* ================= SECTIONS ================= */
 .section{
   border-bottom:1px solid #e5e7eb;
@@ -150,6 +153,16 @@ tr:hover{
 <div id="panel">
 
 <div class="section">
+    <h3 onclick="toggleSection(this)">📍 Place Search</h3>
+    <div class="content">
+      <input id="placeSearch" placeholder="Search city / village">
+      <button onclick="searchPlace()">Search Place</button>
+    </div>
+  </div>
+
+
+
+<div class="section">
 <h3 onclick="toggleSection(this)">📂 Load KML / KMZ</h3>
 <div class="content">
 <input type="file" id="fileInput" accept=".kml,.kmz" multiple>
@@ -207,6 +220,10 @@ tr:hover{
 </div>
 
 <div id="map"></div>
+
+
+
+
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -492,6 +509,40 @@ function searchByAttribute(){
     alert("No matching attribute found");
   }
 }
+
+
+
+// ================= PLACE SEARCH (CITY / VILLAGE) =================
+function searchPlace(){
+  const q = document.getElementById("placeSearch").value.trim();
+
+  if(!q){
+    alert("Enter city or village name");
+    return;
+  }
+
+  fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`)
+    .then(r => r.json())
+    .then(d => {
+      if(!d.length){
+        alert("Place not found");
+        return;
+      }
+
+      const lat = parseFloat(d[0].lat);
+      const lon = parseFloat(d[0].lon);
+
+      map.setView([lat, lon], 12);
+
+      // optional marker
+      L.marker([lat, lon])
+        .addTo(map)
+        .bindPopup(d[0].display_name)
+        .openPopup();
+    })
+    .catch(() => alert("Search error"));
+}
+
 
 </script>
 
