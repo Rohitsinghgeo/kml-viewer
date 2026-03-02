@@ -160,14 +160,6 @@ tr:hover{
     </div>
   </div>
 
-  <div class="section">
-  <h3 onclick="toggleSection(this)">⬇ Export Drawings</h3>
-  <div class="content">
-    <button onclick="exportDrawKML()">Export Drawings → KML</button>
-    <button onclick="exportDrawKMZ()">Export Drawings → KMZ</button>
-  </div>
-  </div> 
-
 
 
 
@@ -187,6 +179,8 @@ tr:hover{
     </div>
   </div>
 </div>
+
+
 
 
 <div class="section">
@@ -218,6 +212,14 @@ tr:hover{
 <table id="areaTable"></table>
 </div>
 </div>
+
+<div class="section">
+  <h3 onclick="toggleSection(this)">⬇ Export Drawings</h3>
+  <div class="content">
+    <button onclick="exportDrawKML()">Export Drawings → KML</button>
+    <button onclick="exportDrawKMZ()">Export Drawings → KMZ</button>
+  </div>
+  </div> 
 
 <div class="section">
 <h3 onclick="toggleSection(this)">📋 Attribute Table</h3>
@@ -258,12 +260,12 @@ tr:hover{
 const map=L.map("map",{center:[22,78],zoom:4, zoomControl: false});
 const imagery = L.tileLayer(
  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
- { maxZoom: 22 }
+ { maxZoom: 19 }
 ).addTo(map);
 
 const labels = L.tileLayer(
  "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
- { maxZoom: 22 }
+ { maxZoom: 19 }
 ).addTo(map);
 
 
@@ -435,12 +437,18 @@ function register(layer,type,feature){
     }
   });
   if(feature?.properties?.name){
-    const ll=layer.getBounds?.()?.getCenter?.()||layer.getLatLng();
-    const lbl=L.marker(ll,{icon:L.divIcon({className:"kml-label",html:feature.properties.name})});
-    if(type==="point") pointLabelGroup.addLayer(lbl);
-    if(type==="line") lineLabelGroup.addLayer(lbl);
-    if(type==="polygon") polyLabelGroup.addLayer(lbl);
-  }
+  const ll = layer.getBounds?.()?.getCenter?.() || layer.getLatLng();
+
+  layer._label = L.marker(ll,{
+    icon: L.divIcon({
+      className: "kml-label",
+      html: feature.properties.name
+    })
+  });
+
+  layer._labelType = type; // point / line / polygon
+}
+
 }
 function resetStyle(layer,type){
   if(type==="polygon") layer.setStyle({color:"red"});
@@ -455,7 +463,44 @@ function sync(){
   pgChk.checked?map.addLayer(polyGroup):map.removeLayer(polyGroup);
   drChk.checked?map.addLayer(drawGroup):map.removeLayer(drawGroup);
   bfChk.checked?map.addLayer(bufferGroup):map.removeLayer(bufferGroup);
-  plChk.checked?map.addLayer(pointLabelGroup):map.removeLayer(pointLabelGroup);
+  // ===== LABEL CONTROL (SAFE) =====
+pointLabelGroup.clearLayers();
+lineLabelGroup.clearLayers();
+polyLabelGroup.clearLayers();
+
+if(plChk.checked){
+  allFeatures.forEach(o=>{
+    if(o.type==="point" && o.layer._label){
+      pointLabelGroup.addLayer(o.layer._label);
+    }
+  });
+  map.addLayer(pointLabelGroup);
+}else{
+  map.removeLayer(pointLabelGroup);
+}
+
+if(llChk.checked){
+  allFeatures.forEach(o=>{
+    if(o.type==="line" && o.layer._label){
+      lineLabelGroup.addLayer(o.layer._label);
+    }
+  });
+  map.addLayer(lineLabelGroup);
+}else{
+  map.removeLayer(lineLabelGroup);
+}
+
+if(glChk.checked){
+  allFeatures.forEach(o=>{
+    if(o.type==="polygon" && o.layer._label){
+      polyLabelGroup.addLayer(o.layer._label);
+    }
+  });
+  map.addLayer(polyLabelGroup);
+}else{
+  map.removeLayer(polyLabelGroup);
+}
+
   llChk.checked?map.addLayer(lineLabelGroup):map.removeLayer(lineLabelGroup);
   glChk.checked?map.addLayer(polyLabelGroup):map.removeLayer(polyLabelGroup);
 }
@@ -676,6 +721,7 @@ function refreshFileList(){
   }
 
   loadedFiles.forEach((f,i)=>{
+
     const row = document.createElement("div");
     row.className = "row";
 
@@ -695,16 +741,38 @@ function refreshFileList(){
     const del = document.createElement("button");
     del.innerText = "❌";
     del.style.width="36px";
+
     del.onclick = ()=>{
+
+      f.group.eachLayer(layer => {
+
+        if(layer._label){
+          map.removeLayer(layer._label);
+        }
+
+        selected = selected.filter(x => x !== layer);
+        allFeatures = allFeatures.filter(x => x.layer !== layer);
+      });
+
       map.removeLayer(f.group);
       loadedFiles.splice(i,1);
+
+      pointLabelGroup.clearLayers();
+      lineLabelGroup.clearLayers();
+      polyLabelGroup.clearLayers();
+
+      sync();
       refreshFileList();
+      refreshTable();
     };
 
+    // 🔥 APPEND EVERYTHING
     row.appendChild(name);
     row.appendChild(chk);
     row.appendChild(del);
+
     box.appendChild(row);
+
   });
 }
 
